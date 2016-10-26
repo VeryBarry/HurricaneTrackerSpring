@@ -1,5 +1,10 @@
-package com.theironyard;
+package com.theironyard.controllers;
 
+import com.theironyard.services.HurricaneRepository;
+import com.theironyard.utilties.PasswordStorage;
+import com.theironyard.services.UserRepository;
+import com.theironyard.entities.Hurricane;
+import com.theironyard.entities.User;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -8,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMethod;
 
 import javax.annotation.PostConstruct;
 import javax.servlet.http.HttpSession;
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -22,8 +28,8 @@ public class HurricaneTrackerController {
     UserRepository users;
 
     @PostConstruct
-    public void init() {
-        User defaultUser = new User("Zach", "hunter2");
+    public void init() throws PasswordStorage.CannotPerformOperationException {
+        User defaultUser = new User("Barton", PasswordStorage.createHash("1234"));
         if (users.findFirstByName(defaultUser.name) == null) {
             users.save(defaultUser);
         }
@@ -33,7 +39,6 @@ public class HurricaneTrackerController {
     public String home(Model model, Hurricane.Category category, String search, HttpSession session) {
         String name = (String) session.getAttribute("username");
         User user = users.findFirstByName(name);
-
         List<Hurricane> hlist;
         if (category != null) {
             hlist = hurricanes.findByCategory(category);
@@ -51,17 +56,18 @@ public class HurricaneTrackerController {
 
         model.addAttribute("hurricanes", hlist);
         model.addAttribute("user", user);
+        model.addAttribute("now", LocalDate.now());
         return "home";
     }
 
     @RequestMapping(path = "/hurricane", method = RequestMethod.POST)
-    public String addHurricane(String hname, String hlocation, Hurricane.Category hcategory, String himage, HttpSession session) throws Exception {
+    public String addHurricane(String hname, String hlocation, Hurricane.Category hcategory, String himage, String date, HttpSession session) throws Exception {
         String name = (String) session.getAttribute("username");
         User user = users.findFirstByName(name);
         if (user == null) {
             throw new Exception("Not logged in.");
         }
-        Hurricane h = new Hurricane(hname, hlocation, hcategory, himage, user);
+        Hurricane h = new Hurricane(hname, hlocation, hcategory, himage, LocalDate.parse(date), user);
         hurricanes.save(h);
         return "redirect:/";
     }
@@ -70,10 +76,10 @@ public class HurricaneTrackerController {
     public String login(String username, String password, HttpSession session) throws Exception {
         User user = users.findFirstByName(username);
         if (user == null) {
-            user = new User(username, password);
+            user = new User(username, PasswordStorage.createHash(password));
             users.save(user);
         }
-        else if (!password.equals(user.password)) {
+        else if (!PasswordStorage.verifyPassword(password, user.password)) {
             throw new Exception("Wrong password!");
         }
         session.setAttribute("username", username);
@@ -88,16 +94,38 @@ public class HurricaneTrackerController {
 
     @RequestMapping(path = "/delete-hurricane", method = RequestMethod.POST)
     public String delete(HttpSession session, int id) throws Exception {
+        if(!validateUser(session, id)) {
+            throw new Exception("Not allowed!");
+        }
+        hurricanes.delete(id);
+        return "redirect:/";
+    }
+
+    @RequestMapping(path = "/edit-hurricane", method = RequestMethod.GET)
+    public String edit(Model model, int id) {
+        Hurricane h = hurricanes.findOne(id);
+        model.addAttribute("hurricane", h);
+        return "edit";
+    }
+
+    @RequestMapping(path = "/edit-hurricane", method = RequestMethod.POST)
+    public String editPost(int id, String hname, String hlocation, Hurricane.Category hcategory, String himage, HttpSession session) throws Exception {
+        if(!validateUser(session, id)) {
+            throw new Exception("Not allowed!");
+        }
+        Hurricane h = hurricanes.findOne(id);
+        h.name = hname;
+        h.location = hlocation;
+        h.category = hcategory;
+        h.image = himage;
+        hurricanes.save(h);
+        return "redirect:/";
+    }
+
+    public boolean validateUser(HttpSession session, int id) {
         String name = (String) session.getAttribute("username");
         User user = users.findFirstByName(name);
         Hurricane h = hurricanes.findOne(id);
-        if (user == null) {
-            throw new Exception("Not logged in.");
-        }
-        else if (!user.name.equals(h.user.name)) {
-            throw new Exception("Not yours to delete!");
-        }
-        hurricanes.delete(h);
-        return "redirect:/";
+        return user != null && h != null && user.name.equals(h.user.name);
     }
 }
